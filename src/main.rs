@@ -15,7 +15,8 @@ use ratatui::{
             PushKeyboardEnhancementFlags,
         },
         execute,
-        terminal::supports_keyboard_enhancement,
+        style::Print,
+        terminal::{SetTitle, supports_keyboard_enhancement},
     },
     layout::{Position, Rect},
     widgets::ListState,
@@ -418,9 +419,11 @@ fn main() -> Result<()> {
     if enhanced {
         execute!(std::io::stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
     }
-    execute!(std::io::stdout(), EnableMouseCapture)?;
+    // Save the current title (XTWINOPS push) so quitting restores it.
+    let title = format!("tg · {} ({})", app.repo.name, app.repo.branch);
+    execute!(std::io::stdout(), Print("\x1b[22;0t"), SetTitle(title), EnableMouseCapture)?;
     let result = run(&mut terminal, &mut app, &changes);
-    execute!(std::io::stdout(), DisableMouseCapture)?;
+    execute!(std::io::stdout(), DisableMouseCapture, Print("\x1b[23;0t"))?;
     if enhanced {
         execute!(std::io::stdout(), PopKeyboardEnhancementFlags)?;
     }
