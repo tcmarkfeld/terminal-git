@@ -19,6 +19,7 @@ pub enum Kind {
     Removed,
 }
 
+#[derive(PartialEq)]
 pub struct Line {
     pub kind: Kind,
     pub old: u32,
@@ -26,6 +27,7 @@ pub struct Line {
     pub text: String,
 }
 
+#[derive(PartialEq)]
 pub struct Hunk {
     pub old_start: u32,
     pub old_len: u32,
@@ -33,6 +35,7 @@ pub struct Hunk {
     pub lines: Vec<Line>,
 }
 
+#[derive(PartialEq)]
 pub struct FileDiff {
     pub path: String,
     pub old_path: Option<String>,

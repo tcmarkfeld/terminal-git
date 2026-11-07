@@ -19,7 +19,7 @@ pub enum Action {
 }
 
 const BUTTONS: [(Action, &str); 3] =
-    [(Action::Commit, " Commit ⏎ "), (Action::CommitAndPush, " Commit & Push ⌘⏎ "), (Action::Push, " Push ⌘U ")];
+    [(Action::Commit, " Commit ⏎ "), (Action::CommitAndPush, " Commit & Push ⌘\\ "), (Action::Push, " Push ⌘U ")];
 
 enum Notice {
     Working(&'static str),
@@ -112,7 +112,9 @@ impl CommitDialog {
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         self.notice = None;
         match key.code {
-            KeyCode::Enter if ctrl || cmd => return self.request(Action::CommitAndPush),
+            // Legacy terminals report Ctrl+\ as Ctrl+4.
+            KeyCode::Char('\\') if ctrl || cmd => return self.request(Action::CommitAndPush),
+            KeyCode::Char('4') if ctrl => return self.request(Action::CommitAndPush),
             KeyCode::Enter => return self.request(Action::Commit),
             // Not Ctrl+U: terminals send that for ⌘⌫, which clears the message below.
             KeyCode::Char('u') if cmd => return self.request(Action::Push),

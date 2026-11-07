@@ -2,9 +2,10 @@ mod commit;
 mod git;
 mod view;
 
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path, sync::mpsc, time::Duration};
 
 use anyhow::Result;
+use notify::{RecursiveMode, Watcher};
 use ratatui::{
     DefaultTerminal,
     crossterm::{
@@ -57,15 +58,31 @@ pub struct App {
     commit: Option<CommitDialog>,
     /// Runs after the next draw so the dialog can show progress first.
     pending: Option<Action>,
+    /// Files changed on disk; reload once no popup is holding indices into `files`.
+    stale: bool,
     syntaxes: SyntaxSet,
     theme: Theme,
 }
 
 impl App {
+    /// Rebuilds only when the diff changed, keeping the current file at the same offset on screen.
     fn reload(&mut self) -> Result<()> {
-        self.files = git::load(&self.args)?;
+        let files = git::load(&self.args)?;
+        if files == self.files && !self.rows.is_empty() {
+            return Ok(());
+        }
+        let anchor = (!self.files.is_empty()).then(|| {
+            let file = self.current_file();
+            (self.files[file].path.clone(), self.scroll - self.file_rows[file])
+        });
+        self.files = files;
         (self.rows, self.header_rows) = view::build_rows(&self.files, &self.syntaxes, &self.theme);
         self.layout();
+        if let Some((path, offset)) = anchor
+            && let Some(file) = self.files.iter().position(|f| f.path == path)
+        {
+            self.scroll = self.file_rows[file] + offset;
+        }
         self.clamp_scroll();
         Ok(())
     }
@@ -327,11 +344,23 @@ fn fuzzy_match(text: &str, query: &str) -> bool {
     query.chars().all(|q| q == ' ' || chars.any(|c| c == q))
 }
 
-fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
+fn run(terminal: &mut DefaultTerminal, app: &mut App, changes: &mpsc::Receiver<()>) -> Result<()> {
     loop {
         terminal.draw(|frame| view::draw(frame, app))?;
         if let Some(action) = app.pending.take() {
             app.perform(action)?;
+            continue;
+        }
+        // Drain bursts of file events into one reload.
+        if changes.try_iter().count() > 0 {
+            app.stale = true;
+        }
+        if app.stale && app.picker.is_none() && app.commit.is_none() {
+            app.stale = false;
+            // A transient git failure (e.g. mid-rebase) shouldn't kill the viewer; the next change retries.
+            app.reload().ok();
+        }
+        if !event::poll(Duration::from_millis(250))? {
             continue;
         }
         match event::read()? {
@@ -366,10 +395,22 @@ fn main() -> Result<()> {
         picker: None,
         commit: None,
         pending: None,
+        stale: false,
         syntaxes: two_face::syntax::extra_newlines(),
         theme: view::theme(),
     };
     app.reload()?;
+
+    // Live updates: any change in the repo (working tree or .git) marks the diff stale.
+    // Without a watcher (e.g. inotify limits on a huge repo) tg still works; `r` reloads by hand.
+    let (tx, changes) = mpsc::channel();
+    let _watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if event.is_ok() {
+            tx.send(()).ok();
+        }
+    })
+    .and_then(|mut watcher| watcher.watch(Path::new("."), RecursiveMode::Recursive).map(|()| watcher))
+    .ok();
 
     let mut terminal = ratatui::init();
     // Needed for the terminal to report Cmd (SUPER) and Ctrl+/ distinctly.
@@ -378,7 +419,7 @@ fn main() -> Result<()> {
         execute!(std::io::stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
     }
     execute!(std::io::stdout(), EnableMouseCapture)?;
-    let result = run(&mut terminal, &mut app);
+    let result = run(&mut terminal, &mut app, &changes);
     execute!(std::io::stdout(), DisableMouseCapture)?;
     if enhanced {
         execute!(std::io::stdout(), PopKeyboardEnhancementFlags)?;
