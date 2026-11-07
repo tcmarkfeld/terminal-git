@@ -2,8 +2,15 @@
 name = "tg"
 version = "0.1.0"
 edition = "2024"
+description = "A simple, Linear-style git diff viewer for the terminal"
+repository = "https://github.com/tcmarkfeld/terminal-git"
 
 [dependencies]
 anyhow = "1.0.104"
 ratatui = "0.30.2"
 two-face = "0.5.2"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
