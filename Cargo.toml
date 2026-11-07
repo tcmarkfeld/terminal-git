@@ -1,0 +1,9 @@
+[package]
+name = "tg"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+ratatui = "0.30.2"
+two-face = "0.5.2"
