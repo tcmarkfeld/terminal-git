@@ -31,7 +31,7 @@ tg main...HEAD     # any arguments are passed straight to `git diff`
 | `n` `p` | Next / previous file |
 | `m` `o` | Collapse / open the current file (or click its header) |
 | `h` `l` | Scroll sideways (long lines wrap automatically in narrow windows) |
-| `⌘P` | File finder |
+| `⌘O` or `f` | File finder |
 | `⌘/` | Commit dialog |
 | `r` | Reload |
 | `q` | Quit |

@@ -184,7 +184,7 @@ fn draw_top_bar(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect) {
-    let hints = [("⌘P", "files"), ("⌘/", "git"), ("j k", "scroll"), ("n p", "next/prev file"), ("m o", "collapse/open"), ("h l", "pan"), ("r", "reload"), ("q", "quit")];
+    let hints = [("⌘O", "files"), ("⌘/", "git"), ("j k", "scroll"), ("n p", "next/prev file"), ("m o", "collapse/open"), ("h l", "pan"), ("r", "reload"), ("q", "quit")];
     let spans: Vec<Span> = std::iter::once(Span::raw("  "))
         .chain(hints.iter().flat_map(|(key, label)| [Span::raw(*key).fg(MUTED), Span::raw(format!(" {label}    ")).fg(FAINT)]))
         .collect();

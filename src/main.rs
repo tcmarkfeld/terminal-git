@@ -207,7 +207,7 @@ impl App {
             };
             return Ok(true);
         }
-        if (ctrl || cmd) && key.code == KeyCode::Char('p') {
+        if (ctrl || cmd) && key.code == KeyCode::Char('o') {
             self.commit = None;
             if self.picker.take().is_none() {
                 self.open_picker();
