@@ -1,3 +1,5 @@
+mod agent;
+mod comment;
 mod commit;
 mod git;
 mod view;
@@ -23,8 +25,9 @@ use ratatui::{
 };
 use two_face::re_exports::syntect::{highlighting::Theme, parsing::SyntaxSet};
 
+use comment::CommentDialog;
 use commit::{Action, CommitDialog};
-use git::{FileDiff, Repo};
+use git::{FileDiff, Kind, Repo};
 use view::Row;
 
 /// Narrower than this (e.g. a phone), long lines wrap instead of scrolling sideways.
@@ -57,6 +60,11 @@ pub struct App {
     height: usize,
     picker: Option<Picker>,
     commit: Option<CommitDialog>,
+    comment: Option<CommentDialog>,
+    /// Code rows picked for a comment, as (anchor, cursor) indices into `rows`; always within one file.
+    selection: Option<(usize, usize)>,
+    /// Shown in the footer until the next key press.
+    notice: Option<String>,
     /// Runs after the next draw so the dialog can show progress first.
     pending: Option<Action>,
     /// Files changed on disk; reload once no popup is holding indices into `files`.
@@ -77,6 +85,7 @@ impl App {
             (self.files[file].path.clone(), self.scroll - self.file_rows[file])
         });
         self.files = files;
+        self.selection = None;
         (self.rows, self.header_rows) = view::build_rows(&self.files, &self.syntaxes, &self.theme);
         self.layout();
         if let Some((path, offset)) = anchor
@@ -134,6 +143,7 @@ impl App {
     fn set_collapsed(&mut self, file: usize, collapsed: bool) {
         let Some(path) = self.files.get(file).map(|f| f.path.clone()) else { return };
         let offset = self.file_rows[file].saturating_sub(self.scroll);
+        self.selection = None;
         if collapsed {
             self.collapsed.insert(path);
         } else {
@@ -159,6 +169,92 @@ impl App {
             self.scroll = row;
             self.clamp_scroll();
         }
+    }
+
+    fn file_of_row(&self, row: usize) -> usize {
+        self.header_rows.partition_point(|&header| header <= row).saturating_sub(1)
+    }
+
+    fn is_code(&self, row: usize) -> bool {
+        matches!(self.rows[row], Row::Code { .. })
+    }
+
+    /// Starts a selection on the code line nearest the middle of the screen.
+    fn start_selection(&mut self) {
+        let middle = self.scroll + self.height / 2;
+        // Skip the top line, which the pinned header may cover.
+        let visible = self.scroll + 1..(self.scroll + self.height).min(self.lines.len());
+        let nearest = visible.filter(|&i| self.is_code(self.lines[i].0)).min_by_key(|&i| i.abs_diff(middle));
+        if let Some(i) = nearest {
+            let row = self.lines[i].0;
+            self.selection = Some((row, row));
+        }
+    }
+
+    /// Moves the selection's end to `row`, or starts a new selection there when it is in another file.
+    fn select_to(&mut self, row: usize, extend: bool) {
+        self.selection = match self.selection {
+            Some((anchor, _)) if extend && self.file_of_row(anchor) == self.file_of_row(row) => Some((anchor, row)),
+            _ => Some((row, row)),
+        };
+    }
+
+    fn move_cursor(&mut self, delta: isize) {
+        let Some((anchor, cursor)) = self.selection else { return };
+        let next = if delta > 0 {
+            (cursor + 1..self.rows.len()).find(|&row| self.is_code(row))
+        } else {
+            (0..cursor).rev().find(|&row| self.is_code(row))
+        };
+        if let Some(row) = next.filter(|&row| self.file_of_row(row) == self.file_of_row(anchor)) {
+            self.selection = Some((anchor, row));
+            self.reveal(row);
+        }
+    }
+
+    /// Scrolls just enough to show `row` below the pinned header.
+    fn reveal(&mut self, row: usize) {
+        let Some(line) = self.lines.iter().position(|line| line.0 == row) else { return };
+        if line <= self.scroll {
+            self.scroll = line.saturating_sub(1);
+        } else if line >= self.scroll + self.height {
+            self.scroll = line + 1 - self.height;
+        }
+    }
+
+    fn open_comment(&mut self) {
+        let Some((anchor, cursor)) = self.selection else { return };
+        let (start, end) = (anchor.min(cursor), anchor.max(cursor));
+        let mut excerpt = Vec::new();
+        let (mut new_nums, mut old_nums) = (Vec::new(), Vec::new());
+        for row in &self.rows[start..=end] {
+            match row {
+                Row::Code { kind, num, spans } => {
+                    let marker = match kind {
+                        Kind::Added => '+',
+                        Kind::Removed => '-',
+                        Kind::Context => ' ',
+                    };
+                    excerpt.push(format!("{marker}{}", spans.iter().map(|(_, text)| text.as_str()).collect::<String>()));
+                    if *kind == Kind::Removed { &mut old_nums } else { &mut new_nums }.push(*num);
+                }
+                Row::Gap { .. } => excerpt.push("…".into()),
+                _ => {}
+            }
+        }
+        let range = |nums: &[u32]| match (nums.first(), nums.last()) {
+            (Some(first), Some(last)) if first != last => format!("lines {first}-{last}"),
+            (Some(line), _) => format!("line {line}"),
+            _ => String::new(),
+        };
+        let path = &self.files[self.file_of_row(start)].path;
+        // Only deleted lines selected: their numbers are from the old file.
+        let target = if new_nums.is_empty() {
+            format!("{path} {} (removed)", range(&old_nums))
+        } else {
+            format!("{path} {}", range(&new_nums))
+        };
+        self.comment = Some(CommentDialog::new(target, excerpt));
     }
 
     fn open_picker(&mut self) {
@@ -196,6 +292,23 @@ impl App {
     fn on_key(&mut self, key: KeyEvent) -> Result<bool> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let cmd = key.modifiers.contains(KeyModifiers::SUPER);
+        self.notice = None;
+        if let Some(dialog) = self.comment.as_mut() {
+            match key.code {
+                KeyCode::Esc => self.comment = None,
+                KeyCode::Char('c') if ctrl => return Ok(false),
+                _ => {
+                    if dialog.on_key(key)
+                        && let Some(sent) = dialog.send()
+                    {
+                        self.notice = Some(sent);
+                        self.comment = None;
+                        self.selection = None;
+                    }
+                }
+            }
+            return Ok(true);
+        }
         let toggles_commit = matches!(key.code, KeyCode::Char('/')) && (ctrl || cmd)
             || ctrl && matches!(key.code, KeyCode::Char('7' | '_'));
         // Committing only makes sense for the working tree, not a custom `git diff` range.
@@ -246,6 +359,32 @@ impl App {
             return Ok(true);
         }
 
+        if self.selection.is_some() {
+            let handled = match key.code {
+                KeyCode::Esc => {
+                    self.selection = None;
+                    true
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.move_cursor(1);
+                    true
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.move_cursor(-1);
+                    true
+                }
+                KeyCode::Char('c') | KeyCode::Enter => {
+                    self.open_comment();
+                    true
+                }
+                // Everything else (scrolling, file jumps) works as usual.
+                _ => false,
+            };
+            if handled {
+                return Ok(true);
+            }
+        }
+
         let page = self.height.max(2) as isize;
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(false),
@@ -276,6 +415,7 @@ impl App {
             KeyCode::Char('m') => self.set_collapsed(self.current_file(), true),
             KeyCode::Char('o') => self.set_collapsed(self.current_file(), false),
             KeyCode::Char('r') => self.reload()?,
+            KeyCode::Char('v') => self.start_selection(),
             _ => {}
         }
         self.clamp_scroll();
@@ -293,6 +433,10 @@ impl App {
     }
 
     fn on_mouse(&mut self, mouse: MouseEvent) {
+        if let Some(dialog) = self.comment.as_mut() {
+            dialog.on_mouse(mouse);
+            return;
+        }
         if let Some(dialog) = self.commit.as_mut() {
             self.pending = dialog.on_mouse(mouse);
             return;
@@ -322,16 +466,21 @@ impl App {
             MouseEventKind::ScrollUp => self.scroll_by(-3),
             MouseEventKind::ScrollRight => self.hscroll += 4,
             MouseEventKind::ScrollLeft => self.hscroll = self.hscroll.saturating_sub(4),
-            MouseEventKind::Down(MouseButton::Left) if self.body.contains(pos) => {
+            MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) if self.body.contains(pos) => {
                 let line = self.scroll + (mouse.row - self.body.y) as usize;
+                let drag = matches!(mouse.kind, MouseEventKind::Drag(_));
                 // The top line is always a header: either the real one or the current file's pinned one.
-                let file = if mouse.row == self.body.y {
+                let header = if mouse.row == self.body.y {
                     Some(self.current_file())
                 } else {
                     self.file_rows.iter().position(|&row| row == line)
                 };
-                if let Some(file) = file.filter(|_| !self.files.is_empty()) {
-                    self.set_collapsed(file, !self.collapsed.contains(&self.files[file].path));
+                if let Some(file) = header.filter(|_| !self.files.is_empty()) {
+                    if !drag {
+                        self.set_collapsed(file, !self.collapsed.contains(&self.files[file].path));
+                    }
+                } else if let Some(row) = self.lines.get(line).map(|line| line.0).filter(|&row| self.is_code(row)) {
+                    self.select_to(row, drag || mouse.modifiers.contains(KeyModifiers::SHIFT));
                 }
             }
             _ => {}
@@ -356,7 +505,8 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App, changes: &mpsc::Receiver<(
         if changes.try_iter().count() > 0 {
             app.stale = true;
         }
-        if app.stale && app.picker.is_none() && app.commit.is_none() {
+        // Popups and a selection hold indices into the current rows; reload once they're done.
+        if app.stale && app.picker.is_none() && app.commit.is_none() && app.comment.is_none() && app.selection.is_none() {
             app.stale = false;
             // A transient git failure (e.g. mid-rebase) shouldn't kill the viewer; the next change retries.
             app.reload().ok();
@@ -395,6 +545,9 @@ fn main() -> Result<()> {
         height: 0,
         picker: None,
         commit: None,
+        comment: None,
+        selection: None,
+        notice: None,
         pending: None,
         stale: false,
         syntaxes: two_face::syntax::extra_newlines(),

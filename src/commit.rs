@@ -109,7 +109,6 @@ impl CommitDialog {
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let cmd = key.modifiers.contains(KeyModifiers::SUPER);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
         self.notice = None;
         match key.code {
             // Legacy terminals report Ctrl+\ as Ctrl+4.
@@ -133,15 +132,7 @@ impl CommitDialog {
                 }
                 _ => {}
             },
-            KeyCode::Backspace if cmd => self.message.clear(),
-            KeyCode::Char('u') if ctrl => self.message.clear(),
-            KeyCode::Backspace if alt => self.delete_word(),
-            KeyCode::Char('w') if ctrl => self.delete_word(),
-            KeyCode::Backspace => {
-                self.message.pop();
-            }
-            KeyCode::Char(c) if !ctrl && !cmd => self.message.push(c),
-            _ => {}
+            _ => edit_text(&mut self.message, key),
         }
         None
     }
@@ -176,11 +167,30 @@ impl CommitDialog {
             self.state.select(Some(i.saturating_add_signed(delta).min(self.selected.len().saturating_sub(1))));
         }
     }
+}
 
-    fn delete_word(&mut self) {
-        self.message.truncate(self.message.trim_end().len());
-        self.message.truncate(self.message.rfind(' ').map_or(0, |i| i + 1));
+/// Single-field text editing shared by the dialogs.
+pub fn edit_text(text: &mut String, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let cmd = key.modifiers.contains(KeyModifiers::SUPER);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    match key.code {
+        // Terminals send ⌘⌫ as Ctrl+U.
+        KeyCode::Backspace if cmd => text.clear(),
+        KeyCode::Char('u') if ctrl => text.clear(),
+        KeyCode::Backspace if alt => delete_word(text),
+        KeyCode::Char('w') if ctrl => delete_word(text),
+        KeyCode::Backspace => {
+            text.pop();
+        }
+        KeyCode::Char(c) if !ctrl && !cmd => text.push(c),
+        _ => {}
     }
+}
+
+fn delete_word(text: &mut String) {
+    text.truncate(text.trim_end().len());
+    text.truncate(text.rfind([' ', '\n']).map_or(0, |i| i + 1));
 }
 
 pub fn draw(frame: &mut Frame, dialog: &mut CommitDialog, files: &[FileDiff], area: Rect) {

@@ -21,6 +21,7 @@ pub const TEXT: Color = Color::Rgb(228, 229, 233);
 pub const MUTED: Color = Color::Rgb(138, 143, 152);
 pub const FAINT: Color = Color::Rgb(84, 88, 98);
 pub const ACCENT: Color = Color::Rgb(133, 125, 255);
+const SELECT_BG: Color = Color::Rgb(55, 51, 122);
 const ADD_BG: Color = Color::Rgb(27, 48, 33);
 pub const ADD_FG: Color = Color::Rgb(108, 207, 138);
 const DEL_BG: Color = Color::Rgb(56, 29, 33);
@@ -136,7 +137,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.clamp_scroll();
 
     draw_top_bar(frame, app, top);
-    draw_footer(frame, bottom);
+    draw_footer(frame, app, bottom);
 
     if app.files.is_empty() {
         let msg = Paragraph::new("No changes").fg(MUTED).centered();
@@ -149,6 +150,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if let Some(dialog) = app.commit.as_mut() {
         crate::commit::draw(frame, dialog, &app.files, area);
+    }
+    if let Some(dialog) = app.comment.as_mut() {
+        crate::comment::draw(frame, dialog, area);
     }
 }
 
@@ -183,8 +187,16 @@ fn draw_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect) {
-    let hints = [("⌘O", "files"), ("⌘/", "git"), ("j k", "scroll"), ("n p", "next/prev file"), ("m o", "collapse/open"), ("h l", "pan"), ("r", "reload"), ("q", "quit")];
+fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
+    if let Some(notice) = &app.notice {
+        frame.render_widget(Line::from(Span::raw(format!("  ✓ {notice}")).fg(ADD_FG)), area);
+        return;
+    }
+    let hints: &[(&str, &str)] = if app.selection.is_some() {
+        &[("j k", "extend"), ("c", "comment"), ("esc", "cancel")]
+    } else {
+        &[("⌘O", "files"), ("⌘/", "git"), ("v", "comment"), ("j k", "scroll"), ("n p", "next/prev file"), ("m o", "collapse/open"), ("h l", "pan"), ("r", "reload"), ("q", "quit")]
+    };
     let spans: Vec<Span> = std::iter::once(Span::raw("  "))
         .chain(hints.iter().flat_map(|(key, label)| [Span::raw(*key).fg(MUTED), Span::raw(format!(" {label}    ")).fg(FAINT)]))
         .collect();
@@ -193,14 +205,16 @@ fn draw_footer(frame: &mut Frame, area: Rect) {
 
 fn draw_body(frame: &mut Frame, app: &App, area: Rect) {
     let width = num_width(&app.rows);
+    let selected = app.selection.map(|(anchor, cursor)| anchor.min(cursor)..=anchor.max(cursor));
     for (i, &(row, segment)) in app.lines.iter().skip(app.scroll).take(area.height as usize).enumerate() {
         let rect = Rect { y: area.y + i as u16, height: 1, ..area };
-        draw_row(frame, app, &app.rows[row], segment, rect, width);
+        let is_selected = selected.as_ref().is_some_and(|range| range.contains(&row));
+        draw_row(frame, app, &app.rows[row], segment, rect, width, is_selected);
     }
     // Sticky header: keep the current file's card pinned while scrolling through it.
     let file = app.current_file();
     if app.file_rows[file] < app.scroll {
-        draw_row(frame, app, &Row::Header(file), 0, Rect { height: 1, ..area }, width);
+        draw_row(frame, app, &Row::Header(file), 0, Rect { height: 1, ..area }, width, false);
     }
 }
 
@@ -217,7 +231,7 @@ pub fn num_width(rows: &[Row]) -> usize {
     max.unwrap_or(0).to_string().len().max(3)
 }
 
-fn draw_row(frame: &mut Frame, app: &App, row: &Row, segment: usize, area: Rect, width: usize) {
+fn draw_row(frame: &mut Frame, app: &App, row: &Row, segment: usize, area: Rect, width: usize, selected: bool) {
     match row {
         Row::Header(i) => {
             let file = &app.files[*i];
@@ -272,13 +286,15 @@ fn draw_row(frame: &mut Frame, app: &App, row: &Row, segment: usize, area: Rect,
         }
         Row::Code { kind, num, spans } => {
             let (bg, bar, num_fg) = match kind {
+                _ if selected => (SELECT_BG, Span::raw("▌").fg(ACCENT), ACCENT),
                 Kind::Added => (ADD_BG, Span::raw("▌").fg(ADD_FG), ADD_FG),
                 Kind::Removed => (DEL_BG, Span::raw("▌").fg(DEL_FG), DEL_FG),
                 Kind::Context => (BG, Span::raw(" "), FAINT),
             };
             // Wrapped continuation lines leave the number blank.
             let num = if segment == 0 { num.to_string() } else { String::new() };
-            let mut out = vec![bar, Span::raw(format!("{num:>width$}   ")).fg(num_fg)];
+            let num = Span::raw(format!("{num:>width$}   ")).fg(num_fg);
+            let mut out = vec![bar, if selected { num.bold() } else { num }];
             let mut skip = if app.wrap > 0 { segment * app.wrap } else { app.hscroll };
             for (fg, text) in spans {
                 let n = text.chars().count();
@@ -289,7 +305,7 @@ fn draw_row(frame: &mut Frame, app: &App, row: &Row, segment: usize, area: Rect,
                 let text: String = text.chars().skip(skip).collect();
                 skip = 0;
                 let span = Span::raw(text).fg(*fg);
-                out.push(if *kind == Kind::Removed { span.add_modifier(Modifier::DIM) } else { span });
+                out.push(if *kind == Kind::Removed && !selected { span.add_modifier(Modifier::DIM) } else { span });
             }
             frame.render_widget(Line::from(out).bg(bg), area);
         }

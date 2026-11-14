@@ -33,10 +33,15 @@ tg main...HEAD     # any arguments are passed straight to `git diff`
 | `h` `l` | Scroll sideways (long lines wrap automatically in narrow windows) |
 | `⌘O` or `f` | File finder |
 | `⌘/` | Commit dialog |
+| `v` or click / drag | Select lines to comment on (`j` `k` extend, `c` comment, `esc` cancel) |
 | `r` | Reload |
 | `q` | Quit |
 
 In the commit dialog: type a message, `Tab` to pick files (`Space` toggles, `a` toggles all), then `⏎` to commit, `⌘\` to commit and push, or `⌘U` to push. If your terminal doesn't pass `⌘` through, `Ctrl` works for the finder, commit dialog, and commit and push.
+
+### Comment to an agent
+
+In the Rex terminal, select lines and press `c` to send a comment about them to a coding agent (Claude Code, Codex, Gemini, opencode, Aider, and others) running in another pane. The agent in the same tab is picked by default; `↑` `↓` chooses another. The agent receives the file, line numbers, the selected diff lines, and your comment.
 
 ## License
 
