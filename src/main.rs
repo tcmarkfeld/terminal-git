@@ -2,6 +2,7 @@ mod agent;
 mod comment;
 mod commit;
 mod git;
+mod update;
 mod view;
 
 use std::{collections::HashSet, path::Path, sync::mpsc, time::Duration};
@@ -29,6 +30,25 @@ use comment::CommentDialog;
 use commit::{Action, CommitDialog};
 use git::{FileDiff, Kind, Repo};
 use view::Row;
+
+const HELP: &str = "\
+tg: a fast, minimal git diff viewer
+
+Usage:
+  tg                 everything changed since HEAD, including untracked files
+  tg <git diff args> e.g. `tg main...HEAD` or `tg --cached`
+  tg update          update to the latest release
+  tg help            show this help
+  tg --version       print the version
+
+Keys:
+  j k / scroll       scroll           n p    next / previous file
+  d u / space b      half / full page m o    collapse / open file
+  g G                top / bottom     h l    scroll sideways
+  ⌘O or f            file finder      ⌘/     commit and push
+  v or click / drag  select lines, then c to comment to an agent in Rex
+  r                  reload           q      quit
+";
 
 /// Narrower than this (e.g. a phone), long lines wrap instead of scrolling sideways.
 const WRAP_BELOW: u16 = 60;
@@ -528,6 +548,19 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App, changes: &mpsc::Receiver<(
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Anything else goes to `git diff`; a branch named help is still reachable as `tg refs/heads/help`.
+    match args.first().map(String::as_str) {
+        Some("help" | "--help" | "-h") => {
+            print!("{HELP}");
+            return Ok(());
+        }
+        Some("version" | "--version" | "-V") => {
+            println!("tg {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Some("update") => return update::run(),
+        _ => {}
+    }
     let repo = git::open()?;
     let mut app = App {
         repo,

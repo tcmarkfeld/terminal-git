@@ -21,6 +21,8 @@ cargo install --git https://github.com/tcmarkfeld/terminal-git
 ```sh
 tg                 # everything changed since HEAD, including untracked files
 tg main...HEAD     # any arguments are passed straight to `git diff`
+tg update          # update to the latest release
+tg help            # usage and keys
 ```
 
 | Key | Action |
