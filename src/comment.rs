@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::agent::{self, Agent};
 use crate::commit::edit_text;
-use crate::view::{ACCENT, ADD_FG, DEL_FG, FAINT, MUTED, RAISED, SURFACE, TEXT};
+use crate::view::{ACCENT, ADD_FG, BORDER, DEL_FG, FAINT, MUTED, RAISED, SURFACE, TEXT, key_hints};
 
 /// Diff lines shown above the input; the full excerpt is still sent.
 const PREVIEW_LINES: usize = 6;
@@ -98,27 +98,21 @@ pub fn draw(frame: &mut Frame, dialog: &mut CommentDialog, area: Rect) {
     let preview = dialog.excerpt.len().min(PREVIEW_LINES) + usize::from(dialog.excerpt.len() > PREVIEW_LINES);
     let agents = dialog.agents.as_ref().map_or(1, |a| a.len().clamp(1, 5));
     let width = area.width.saturating_sub(8).min(90);
-    let height = (preview + agents + 12) as u16;
+    let height = (preview + agents + 11) as u16;
     let [popup] = Layout::horizontal([Constraint::Length(width)]).flex(Flex::Center).areas(area);
     let [popup] = Layout::vertical([Constraint::Length(height.min(area.height))]).flex(Flex::Center).areas(popup);
 
-    let hints = [("⏎", "send"), ("⌥⏎", "newline"), ("↑↓", "agent"), ("esc", "cancel")];
-    let hints: Vec<Span> = hints
-        .iter()
-        .flat_map(|(key, label)| [Span::raw(format!(" {key}")).fg(MUTED), Span::raw(format!(" {label} ")).fg(FAINT)])
-        .collect();
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(RAISED))
+        .border_style(Style::new().fg(BORDER))
         .bg(SURFACE)
         .title(Span::raw(" Comment ").fg(TEXT).bold())
-        .title(Line::from(Span::raw(format!(" {} ", dialog.target)).fg(MUTED)).right_aligned())
-        .title_bottom(Line::from(hints));
+        .title(Line::from(Span::raw(format!(" {} ", dialog.target)).fg(MUTED)).right_aligned());
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
 
-    let [excerpt_area, _, input_area, _, label_area, list_area, error_area] = Layout::vertical([
+    let [excerpt_area, _, input_area, _, label_area, list_area, error_area, _, hints_area] = Layout::vertical([
         Constraint::Length(preview as u16),
         Constraint::Length(1),
         Constraint::Length(3),
@@ -126,8 +120,12 @@ pub fn draw(frame: &mut Frame, dialog: &mut CommentDialog, area: Rect) {
         Constraint::Length(1),
         Constraint::Fill(1),
         Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
     ])
     .areas(inner);
+    let hints = [("⏎", "send"), ("⌥⏎", "newline"), ("↑↓", "agent"), ("esc", "cancel")];
+    frame.render_widget(key_hints(&hints), Rect { x: hints_area.x + 1, width: hints_area.width.saturating_sub(1), ..hints_area });
     dialog.list_area = list_area;
 
     let mut lines: Vec<Line> = dialog

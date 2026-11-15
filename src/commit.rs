@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::git::{self, FileDiff};
-use crate::view::{ACCENT, ADD_FG, DEL_FG, FAINT, MUTED, RAISED, SURFACE, TEXT, status_letter};
+use crate::view::{ACCENT, ADD_FG, BORDER, DEL_FG, FAINT, MUTED, RAISED, SURFACE, TEXT, key_hints, status_letter};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Action {
@@ -195,7 +195,7 @@ fn delete_word(text: &mut String) {
 
 pub fn draw(frame: &mut Frame, dialog: &mut CommitDialog, files: &[FileDiff], area: Rect) {
     let width = area.width.saturating_sub(8).min(84);
-    let height = (files.len() as u16 + 9).min(area.height.saturating_sub(4)).max(12);
+    let height = (files.len() as u16 + 11).min(area.height.saturating_sub(4)).max(14);
     let [popup] = Layout::horizontal([Constraint::Length(width)]).flex(Flex::Center).areas(area);
     let [popup] = Layout::vertical([Constraint::Length(height)]).flex(Flex::Center).areas(popup);
 
@@ -204,31 +204,29 @@ pub fn draw(frame: &mut Frame, dialog: &mut CommitDialog, files: &[FileDiff], ar
         Some((name, ahead)) => Line::from(vec![Span::raw(format!(" → {name} ")).fg(MUTED), Span::raw(format!("↑{ahead} ")).fg(ACCENT)]),
         None => Line::from(Span::raw(" no upstream ").fg(FAINT)),
     };
-    let hints = [("⇥", "files"), ("space", "toggle"), ("a", "all"), ("esc", "close")];
-    let hints: Vec<Span> = hints
-        .iter()
-        .flat_map(|(key, label)| [Span::raw(format!(" {key}")).fg(MUTED), Span::raw(format!(" {label} ")).fg(FAINT)])
-        .collect();
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(RAISED))
+        .border_style(Style::new().fg(BORDER))
         .bg(SURFACE)
         .title(Span::raw(" Commit ").fg(TEXT).bold())
-        .title(upstream.right_aligned())
-        .title_bottom(Line::from(hints));
+        .title(upstream.right_aligned());
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
 
-    let [message_area, _, list_area, _, buttons_area, notice_area] = Layout::vertical([
+    let [message_area, _, list_area, _, buttons_area, notice_area, _, hints_area] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Fill(1),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
     ])
     .areas(inner);
+    let hints = [("⇥", "files"), ("space", "toggle"), ("a", "all"), ("esc", "close")];
+    frame.render_widget(key_hints(&hints), Rect { x: hints_area.x + 1, width: hints_area.width.saturating_sub(1), ..hints_area });
     dialog.message_area = message_area;
     dialog.list_area = list_area;
 

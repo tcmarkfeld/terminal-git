@@ -2,6 +2,7 @@ mod agent;
 mod comment;
 mod commit;
 mod git;
+mod help;
 mod update;
 mod view;
 
@@ -31,7 +32,7 @@ use commit::{Action, CommitDialog};
 use git::{FileDiff, Kind, Repo};
 use view::Row;
 
-const HELP: &str = "\
+const USAGE: &str = "\
 tg: a fast, minimal git diff viewer
 
 Usage:
@@ -40,14 +41,6 @@ Usage:
   tg update          update to the latest release
   tg help            show this help
   tg --version       print the version
-
-Keys:
-  j k / scroll       scroll           n p    next / previous file
-  d u / space b      half / full page m o    collapse / open file
-  g G                top / bottom     h l    scroll sideways
-  ⌘O or f            file finder      ⌘/     commit and push
-  v or click / drag  select lines, then c to comment to an agent in Rex
-  r                  reload           q      quit
 ";
 
 /// Narrower than this (e.g. a phone), long lines wrap instead of scrolling sideways.
@@ -85,6 +78,10 @@ pub struct App {
     selection: Option<(usize, usize)>,
     /// Shown in the footer until the next key press.
     notice: Option<String>,
+    /// The shortcuts overlay is open.
+    help: bool,
+    /// Where the footer's "⌥/ shortcuts" hint is drawn, so clicking it opens the overlay.
+    help_hint: Rect,
     /// Runs after the next draw so the dialog can show progress first.
     pending: Option<Action>,
     /// Files changed on disk; reload once no popup is holding indices into `files`.
@@ -313,6 +310,13 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let cmd = key.modifiers.contains(KeyModifiers::SUPER);
         self.notice = None;
+        if self.help {
+            if matches!(key.code, KeyCode::Char('c') if ctrl) {
+                return Ok(false);
+            }
+            self.help = false;
+            return Ok(true);
+        }
         if let Some(dialog) = self.comment.as_mut() {
             match key.code {
                 KeyCode::Esc => self.comment = None,
@@ -379,6 +383,11 @@ impl App {
             return Ok(true);
         }
 
+        // ⌥/ types ÷ on a Mac unless the terminal sends Option as Alt; `?` works anywhere.
+        if matches!(key.code, KeyCode::Char('÷' | '?')) || key.code == KeyCode::Char('/') && key.modifiers.contains(KeyModifiers::ALT) {
+            self.help = true;
+            return Ok(true);
+        }
         if self.selection.is_some() {
             let handled = match key.code {
                 KeyCode::Esc => {
@@ -453,6 +462,15 @@ impl App {
     }
 
     fn on_mouse(&mut self, mouse: MouseEvent) {
+        let click = mouse.kind == MouseEventKind::Down(MouseButton::Left);
+        if self.help {
+            self.help = !click;
+            return;
+        }
+        if click && self.help_hint.contains(Position::new(mouse.column, mouse.row)) {
+            self.help = true;
+            return;
+        }
         if let Some(dialog) = self.comment.as_mut() {
             dialog.on_mouse(mouse);
             return;
@@ -551,7 +569,7 @@ fn main() -> Result<()> {
     // Anything else goes to `git diff`; a branch named help is still reachable as `tg refs/heads/help`.
     match args.first().map(String::as_str) {
         Some("help" | "--help" | "-h") => {
-            print!("{HELP}");
+            println!("{USAGE}\n{}", help::text());
             return Ok(());
         }
         Some("version" | "--version" | "-V") => {
@@ -581,6 +599,8 @@ fn main() -> Result<()> {
         comment: None,
         selection: None,
         notice: None,
+        help: false,
+        help_hint: Rect::default(),
         pending: None,
         stale: false,
         syntaxes: two_face::syntax::extra_newlines(),

@@ -37,6 +37,7 @@ tg help            # usage and keys
 | `⌘/` | Commit dialog |
 | `v` or click / drag | Select lines to comment on (`j` `k` extend, `c` comment, `esc` cancel) |
 | `r` | Reload |
+| `⌥/` or `?` | All shortcuts |
 | `q` | Quit |
 
 In the commit dialog: type a message, `Tab` to pick files (`Space` toggles, `a` toggles all), then `⏎` to commit, `⌘\` to commit and push, or `⌘U` to push. If your terminal doesn't pass `⌘` through, `Ctrl` works for the finder, commit dialog, and commit and push.

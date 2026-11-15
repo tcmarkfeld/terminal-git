@@ -17,6 +17,8 @@ use crate::git::{FileDiff, Kind, Status};
 pub const BG: Color = Color::Rgb(19, 20, 23);
 pub const SURFACE: Color = Color::Rgb(28, 29, 33);
 pub const RAISED: Color = Color::Rgb(40, 42, 49);
+/// Popup outlines: visible against both the diff and the popup surface.
+pub const BORDER: Color = Color::Rgb(58, 60, 70);
 pub const TEXT: Color = Color::Rgb(228, 229, 233);
 pub const MUTED: Color = Color::Rgb(138, 143, 152);
 pub const FAINT: Color = Color::Rgb(84, 88, 98);
@@ -154,6 +156,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if let Some(dialog) = app.comment.as_mut() {
         crate::comment::draw(frame, dialog, area);
     }
+    if app.help {
+        crate::help::draw(frame, area);
+    }
+}
+
+/// Keyboard hints as small keycaps, for the last row of a popup.
+pub fn key_hints(items: &[(&str, &str)]) -> Line<'static> {
+    let spans: Vec<Span> = items
+        .iter()
+        .flat_map(|(key, label)| [Span::raw(format!(" {key} ")).fg(TEXT).bg(RAISED), Span::raw(format!(" {label}   ")).fg(MUTED)])
+        .collect();
+    Line::from(spans)
 }
 
 pub fn status_letter(status: Status) -> (&'static str, Color) {
@@ -187,20 +201,20 @@ fn draw_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
+/// Quiet by default: a confirmation on the left, one contextual hint on the right.
+fn draw_footer(frame: &mut Frame, app: &mut App, area: Rect) {
     if let Some(notice) = &app.notice {
         frame.render_widget(Line::from(Span::raw(format!("  ✓ {notice}")).fg(ADD_FG)), area);
-        return;
     }
-    let hints: &[(&str, &str)] = if app.selection.is_some() {
-        &[("j k", "extend"), ("c", "comment"), ("esc", "cancel")]
-    } else {
-        &[("⌘O", "files"), ("⌘/", "git"), ("v", "comment"), ("j k", "scroll"), ("n p", "next/prev file"), ("m o", "collapse/open"), ("h l", "pan"), ("r", "reload"), ("q", "quit")]
-    };
-    let spans: Vec<Span> = std::iter::once(Span::raw("  "))
-        .chain(hints.iter().flat_map(|(key, label)| [Span::raw(*key).fg(MUTED), Span::raw(format!(" {label}    ")).fg(FAINT)]))
+    let hints: &[(&str, &str)] = if app.selection.is_some() { &[("c", "comment"), ("esc", "cancel")] } else { &[("⌥/", "shortcuts")] };
+    let spans: Vec<Span> = hints
+        .iter()
+        .flat_map(|(key, label)| [Span::raw(*key).fg(MUTED), Span::raw(format!(" {label}  ")).fg(FAINT)])
         .collect();
-    frame.render_widget(Line::from(spans), area);
+    let hint = Line::from(spans);
+    let width = hint.width() as u16;
+    app.help_hint = if app.selection.is_some() { Rect::default() } else { Rect { x: area.right().saturating_sub(width), width, ..area } };
+    frame.render_widget(hint.right_aligned(), area);
 }
 
 fn draw_body(frame: &mut Frame, app: &App, area: Rect) {
@@ -291,8 +305,12 @@ fn draw_row(frame: &mut Frame, app: &App, row: &Row, segment: usize, area: Rect,
                 Kind::Removed => (DEL_BG, Span::raw("▌").fg(DEL_FG), DEL_FG),
                 Kind::Context => (BG, Span::raw(" "), FAINT),
             };
-            // Wrapped continuation lines leave the number blank.
-            let num = if segment == 0 { num.to_string() } else { String::new() };
+            // Deleted lines show a dash instead of their old number; wrapped continuation lines show nothing.
+            let num = match (segment, kind) {
+                (0, Kind::Removed) => "–".to_string(),
+                (0, _) => num.to_string(),
+                _ => String::new(),
+            };
             let num = Span::raw(format!("{num:>width$}   ")).fg(num_fg);
             let mut out = vec![bar, if selected { num.bold() } else { num }];
             let mut skip = if app.wrap > 0 { segment * app.wrap } else { app.hscroll };
@@ -326,7 +344,7 @@ fn draw_picker(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(RAISED))
+        .border_style(Style::new().fg(BORDER))
         .bg(SURFACE)
         .title(Line::from(vec![
             Span::raw(" Files ").fg(TEXT).bold(),
