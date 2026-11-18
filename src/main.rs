@@ -125,15 +125,14 @@ impl App {
         self.file_rows.clear();
         for i in 0..self.header_rows.len() {
             let header = self.header_rows[i];
-            // Each header after the first is preceded by a blank spacer row.
+            // Each header card is a spacer above, the header, and its bottom edge; collapsing keeps all three.
             let end = self.header_rows.get(i + 1).map_or(self.rows.len(), |&next| next - 1);
-            if i > 0 {
-                self.push_line(header - 1);
-            }
+            self.push_line(header - 1);
             self.file_rows.push(self.lines.len());
             self.push_line(header);
+            self.push_line(header + 1);
             if !self.collapsed.contains(&self.files[i].path) {
-                (header + 1..end).for_each(|row| self.push_line(row));
+                (header + 2..end).for_each(|row| self.push_line(row));
             }
         }
     }
@@ -246,7 +245,7 @@ impl App {
         let (mut new_nums, mut old_nums) = (Vec::new(), Vec::new());
         for row in &self.rows[start..=end] {
             match row {
-                Row::Code { kind, num, spans } => {
+                Row::Code { kind, num, spans, .. } => {
                     let marker = match kind {
                         Kind::Added => '+',
                         Kind::Removed => '-',

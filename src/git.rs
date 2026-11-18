@@ -1,4 +1,7 @@
-use std::process::{Command, Stdio};
+use std::{
+    ops::Range,
+    process::{Command, Stdio},
+};
 
 use anyhow::{Context, Result, bail};
 
@@ -237,9 +240,84 @@ fn parse_hunk_header(line: &str) -> Option<(Hunk, u32, u32)> {
     Some((hunk, new_start, new_len))
 }
 
+/// For each line of a hunk, the characters that changed within it: a removed line paired with the
+/// added line that replaced it, compared word by word. `None` for unpaired lines and for lines that
+/// share nothing, where highlighting the whole line would add noise.
+pub fn inline_changes(lines: &[Line]) -> Vec<Option<Range<usize>>> {
+    let mut changes = vec![None; lines.len()];
+    let mut i = 0;
+    while i < lines.len() {
+        let removed = i + lines[i..].iter().take_while(|l| l.kind == Kind::Removed).count();
+        let added = removed + lines[removed..].iter().take_while(|l| l.kind == Kind::Added).count();
+        // Pair the n-th removed line with the n-th added line of a replaced block.
+        for (old, new) in (i..removed).zip(removed..added) {
+            (changes[old], changes[new]) = changed_ranges(&lines[old].text, &lines[new].text);
+        }
+        i = added.max(i + 1);
+    }
+    changes
+}
+
+fn changed_ranges(old: &str, new: &str) -> (Option<Range<usize>>, Option<Range<usize>>) {
+    let (old, new) = (words(old), words(new));
+    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    let suffix = old[prefix..].iter().rev().zip(new[prefix..].iter().rev()).take_while(|(a, b)| a == b).count();
+    let shared = old[..prefix].iter().chain(&old[old.len() - suffix..]).any(|w| !w.trim().is_empty());
+    if !shared {
+        return (None, None);
+    }
+    let range = |words: &[String]| {
+        let len = |ws: &[String]| ws.iter().map(|w| w.chars().count()).sum::<usize>();
+        let start = len(&words[..prefix]);
+        let end = start + len(&words[prefix..words.len() - suffix]);
+        (start < end).then_some(start..end)
+    };
+    (range(&old), range(&new))
+}
+
+/// Splits into runs of word characters, runs of whitespace, and single punctuation characters.
+fn words(text: &str) -> Vec<String> {
+    let class = |c: char| if c.is_alphanumeric() || c == '_' { 0 } else if c.is_whitespace() { 1 } else { 2 };
+    let mut words: Vec<String> = Vec::new();
+    let mut last = None;
+    for c in text.chars() {
+        match words.last_mut() {
+            Some(word) if last == Some(class(c)) && class(c) != 2 => word.push(c),
+            _ => words.push(c.to_string()),
+        }
+        last = Some(class(c));
+    }
+    words
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn line(kind: Kind, text: &str) -> Line {
+        Line { kind, old: 0, new: 0, text: text.into() }
+    }
+
+    #[test]
+    fn highlights_only_the_changed_words() {
+        let lines = [
+            line(Kind::Context, "fn main() {"),
+            line(Kind::Removed, "    throw new Error(j.error ?? res.statusText)"),
+            line(Kind::Added, "    throw new Error(failureMessage(res, j.error))"),
+            line(Kind::Added, "    extra()"),
+        ];
+        let changes = inline_changes(&lines);
+        assert_eq!(changes[0], None);
+        assert_eq!(&lines[1].text[changes[1].clone().unwrap()], "j.error ?? res.statusText");
+        assert_eq!(&lines[2].text[changes[2].clone().unwrap()], "failureMessage(res, j.error)");
+        assert_eq!(changes[3], None);
+    }
+
+    #[test]
+    fn skips_lines_with_nothing_in_common() {
+        let changes = inline_changes(&[line(Kind::Removed, "alpha"), line(Kind::Added, "beta")]);
+        assert_eq!(changes, vec![None, None]);
+    }
 
     #[test]
     fn parses_modified_file() {

@@ -1,12 +1,12 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Flex, Layout, Rect},
-    style::{Style, Stylize},
+    style::Stylize,
     text::{Line, Span},
-    widgets::{Block, BorderType, Clear, Padding, Paragraph},
+    widgets::Paragraph,
 };
 
-use crate::view::{BORDER, FAINT, MUTED, RAISED, SURFACE, TEXT};
+use crate::view::{FAINT, MUTED, keycap, panel};
 
 type Section = (&'static str, &'static [(&'static str, &'static str)]);
 
@@ -48,7 +48,7 @@ fn section_lines(sections: &[Section], spaced: bool) -> Vec<Line<'static>> {
             }
             let mut spans = Vec::new();
             for key in keys.split(' ') {
-                spans.push(Span::raw(format!(" {key} ")).fg(TEXT).bg(RAISED));
+                spans.extend(keycap(key));
                 spans.push(Span::raw(" "));
             }
             let used: usize = spans.iter().map(Span::width).sum();
@@ -77,15 +77,7 @@ pub fn draw(frame: &mut Frame, area: Rect) {
     let [popup] = Layout::horizontal([Constraint::Length(width)]).flex(Flex::Center).areas(area);
     let [popup] = Layout::vertical([Constraint::Length((rows + 4).min(area.height))]).flex(Flex::Center).areas(popup);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(BORDER))
-        .bg(SURFACE)
-        .padding(Padding::new(2, 2, 1, 1))
-        .title(Span::raw(" Shortcuts ").fg(TEXT).bold());
-    let inner = block.inner(popup);
-    frame.render_widget(Clear, popup);
-    frame.render_widget(block, popup);
+    let inner = panel(frame, popup, "Shortcuts", Line::default());
 
     let areas = Layout::horizontal(vec![Constraint::Fill(1); columns.len()]).spacing(4).split(inner);
     for (lines, area) in columns.into_iter().zip(areas.iter()) {

@@ -5,11 +5,11 @@ use ratatui::{
     layout::{Constraint, Flex, Layout, Position, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Clear, List, ListItem, ListState},
+    widgets::{List, ListItem, ListState},
 };
 
 use crate::git::{self, FileDiff};
-use crate::view::{ACCENT, ADD_FG, BORDER, DEL_FG, FAINT, MUTED, RAISED, SURFACE, TEXT, key_hints, status_letter};
+use crate::view::{ACCENT, ADD_FG, DEL_FG, FAINT, FIELD, MUTED, RAISED, TEXT, key_hints, panel, status_letter};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Action {
@@ -195,7 +195,7 @@ fn delete_word(text: &mut String) {
 
 pub fn draw(frame: &mut Frame, dialog: &mut CommitDialog, files: &[FileDiff], area: Rect) {
     let width = area.width.saturating_sub(8).min(84);
-    let height = (files.len() as u16 + 11).min(area.height.saturating_sub(4)).max(14);
+    let height = (files.len() as u16 + 13).min(area.height.saturating_sub(4)).max(16);
     let [popup] = Layout::horizontal([Constraint::Length(width)]).flex(Flex::Center).areas(area);
     let [popup] = Layout::vertical([Constraint::Length(height)]).flex(Flex::Center).areas(popup);
 
@@ -204,15 +204,7 @@ pub fn draw(frame: &mut Frame, dialog: &mut CommitDialog, files: &[FileDiff], ar
         Some((name, ahead)) => Line::from(vec![Span::raw(format!(" → {name} ")).fg(MUTED), Span::raw(format!("↑{ahead} ")).fg(ACCENT)]),
         None => Line::from(Span::raw(" no upstream ").fg(FAINT)),
     };
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(BORDER))
-        .bg(SURFACE)
-        .title(Span::raw(" Commit ").fg(TEXT).bold())
-        .title(upstream.right_aligned());
-    let inner = block.inner(popup);
-    frame.render_widget(Clear, popup);
-    frame.render_widget(block, popup);
+    let inner = panel(frame, popup, "Commit", upstream);
 
     let [message_area, _, list_area, _, buttons_area, notice_area, _, hints_area] = Layout::vertical([
         Constraint::Length(1),
@@ -237,7 +229,7 @@ pub fn draw(frame: &mut Frame, dialog: &mut CommitDialog, files: &[FileDiff], ar
     let text = if message.is_empty() { Span::raw("Commit message…").fg(FAINT) } else { Span::raw(message).fg(TEXT) };
     let cursor = if dialog.files_focused { Span::raw("") } else { Span::raw("▏").fg(ACCENT) };
     let prompt = Span::raw(" › ").fg(if dialog.files_focused { FAINT } else { ACCENT });
-    frame.render_widget(Line::from(vec![prompt, text, cursor]), message_area);
+    frame.render_widget(Line::from(vec![prompt, text, cursor]).bg(FIELD), message_area);
 
     let items: Vec<ListItem> = files
         .iter()

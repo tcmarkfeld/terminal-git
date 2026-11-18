@@ -5,12 +5,12 @@ use ratatui::{
     layout::{Constraint, Flex, Layout, Position, Rect},
     style::{Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{List, ListItem, ListState, Paragraph, Wrap},
 };
 
 use crate::agent::{self, Agent};
 use crate::commit::edit_text;
-use crate::view::{ACCENT, ADD_FG, BORDER, DEL_FG, FAINT, MUTED, RAISED, SURFACE, TEXT, key_hints};
+use crate::view::{ACCENT, ADD_FG, BG, DEL_FG, FAINT, FIELD, MUTED, RAISED, TEXT, key_hints, panel};
 
 /// Diff lines shown above the input; the full excerpt is still sent.
 const PREVIEW_LINES: usize = 6;
@@ -98,19 +98,11 @@ pub fn draw(frame: &mut Frame, dialog: &mut CommentDialog, area: Rect) {
     let preview = dialog.excerpt.len().min(PREVIEW_LINES) + usize::from(dialog.excerpt.len() > PREVIEW_LINES);
     let agents = dialog.agents.as_ref().map_or(1, |a| a.len().clamp(1, 5));
     let width = area.width.saturating_sub(8).min(90);
-    let height = (preview + agents + 11) as u16;
+    let height = (preview + agents + 13) as u16;
     let [popup] = Layout::horizontal([Constraint::Length(width)]).flex(Flex::Center).areas(area);
     let [popup] = Layout::vertical([Constraint::Length(height.min(area.height))]).flex(Flex::Center).areas(popup);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(BORDER))
-        .bg(SURFACE)
-        .title(Span::raw(" Comment ").fg(TEXT).bold())
-        .title(Line::from(Span::raw(format!(" {} ", dialog.target)).fg(MUTED)).right_aligned());
-    let inner = block.inner(popup);
-    frame.render_widget(Clear, popup);
-    frame.render_widget(block, popup);
+    let inner = panel(frame, popup, "Comment", Line::from(dialog.target.as_str()).fg(MUTED));
 
     let [excerpt_area, _, input_area, _, label_area, list_area, error_area, _, hints_area] = Layout::vertical([
         Constraint::Length(preview as u16),
@@ -144,7 +136,8 @@ pub fn draw(frame: &mut Frame, dialog: &mut CommentDialog, area: Rect) {
     if dialog.excerpt.len() > PREVIEW_LINES {
         lines.push(Line::from(Span::raw(format!("   … {} more lines", dialog.excerpt.len() - PREVIEW_LINES)).fg(FAINT)));
     }
-    frame.render_widget(Paragraph::new(lines), excerpt_area);
+    // The selection sits in a darker inset, like a code block.
+    frame.render_widget(Paragraph::new(lines).bg(BG), excerpt_area);
 
     let text = if dialog.text.is_empty() { Span::raw("Leave a comment…").fg(FAINT) } else { Span::raw(dialog.text.as_str()).fg(TEXT) };
     let mut input: Vec<Line> = vec![Line::from(vec![Span::raw(" › ").fg(ACCENT), text])];
@@ -163,10 +156,10 @@ pub fn draw(frame: &mut Frame, dialog: &mut CommentDialog, area: Rect) {
     let width = (input_area.width as usize).max(1);
     let rows: usize = input.iter().map(|line| line.width().div_ceil(width).max(1)).sum();
     let rows = rows as u16;
-    let input = Paragraph::new(input).wrap(Wrap { trim: false }).scroll((rows.saturating_sub(input_area.height), 0));
+    let input = Paragraph::new(input).wrap(Wrap { trim: false }).scroll((rows.saturating_sub(input_area.height), 0)).bg(FIELD);
     frame.render_widget(input, input_area);
 
-    frame.render_widget(Line::from(Span::raw(" Send to").fg(MUTED)), label_area);
+    frame.render_widget(Line::from(Span::raw(" SEND TO").fg(FAINT).bold()), label_area);
     match &dialog.agents {
         Ok(agents) if !agents.is_empty() => {
             let items: Vec<ListItem> = agents

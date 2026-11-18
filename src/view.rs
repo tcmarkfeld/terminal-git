@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Clear, List, ListItem, Paragraph},
 };
 use two_face::re_exports::syntect::{
     easy::HighlightLines,
@@ -12,13 +12,17 @@ use two_face::re_exports::syntect::{
 };
 
 use crate::App;
-use crate::git::{FileDiff, Kind, Status};
+use std::ops::Range;
+
+use crate::git::{self, FileDiff, Kind, Status};
 
 pub const BG: Color = Color::Rgb(19, 20, 23);
 pub const SURFACE: Color = Color::Rgb(28, 29, 33);
 pub const RAISED: Color = Color::Rgb(40, 42, 49);
-/// Popup outlines: visible against both the diff and the popup surface.
-pub const BORDER: Color = Color::Rgb(58, 60, 70);
+/// Text inputs inside popups.
+pub const FIELD: Color = Color::Rgb(46, 48, 57);
+/// Popup panels: lighter than anything in the diff, which is darkened behind them.
+const POPUP: Color = Color::Rgb(34, 35, 42);
 pub const TEXT: Color = Color::Rgb(228, 229, 233);
 pub const MUTED: Color = Color::Rgb(138, 143, 152);
 pub const FAINT: Color = Color::Rgb(84, 88, 98);
@@ -26,6 +30,9 @@ pub const ACCENT: Color = Color::Rgb(133, 125, 255);
 const SELECT_BG: Color = Color::Rgb(55, 51, 122);
 const ADD_BG: Color = Color::Rgb(27, 48, 33);
 pub const ADD_FG: Color = Color::Rgb(108, 207, 138);
+/// The words that changed within a replaced line.
+const ADD_EMPHASIS: Color = Color::Rgb(44, 84, 55);
+const DEL_EMPHASIS: Color = Color::Rgb(98, 40, 47);
 const DEL_BG: Color = Color::Rgb(56, 29, 33);
 pub const DEL_FG: Color = Color::Rgb(240, 116, 122);
 const MOD_FG: Color = Color::Rgb(232, 190, 102);
@@ -69,9 +76,12 @@ pub fn theme() -> Theme {
 
 pub enum Row {
     Header(usize),
+    /// Bottom half-row of the header card.
+    HeaderEnd,
     Gap { count: u32, context: String },
-    Code { kind: Kind, num: u32, spans: Vec<(Color, String)> },
+    Code { kind: Kind, num: u32, spans: Vec<(Color, String)>, changed: Option<Range<usize>> },
     Note(&'static str),
+    /// Spacer above a header; its lower half is the card's top edge.
     Blank,
 }
 
@@ -79,11 +89,10 @@ pub fn build_rows(files: &[FileDiff], syntaxes: &SyntaxSet, theme: &Theme) -> (V
     let mut rows = Vec::new();
     let mut file_rows = Vec::new();
     for (i, file) in files.iter().enumerate() {
-        if i > 0 {
-            rows.push(Row::Blank);
-        }
+        rows.push(Row::Blank);
         file_rows.push(rows.len());
         rows.push(Row::Header(i));
+        rows.push(Row::HeaderEnd);
         if file.binary {
             rows.push(Row::Note("Binary file"));
         } else if file.hunks.is_empty() {
@@ -106,7 +115,7 @@ pub fn build_rows(files: &[FileDiff], syntaxes: &SyntaxSet, theme: &Theme) -> (V
             next_old = hunk.old_start + hunk.old_len;
 
             let mut highlighter = HighlightLines::new(syntax, theme);
-            for line in &hunk.lines {
+            for (line, changed) in hunk.lines.iter().zip(git::inline_changes(&hunk.lines)) {
                 let spans = highlighter
                     .highlight_line(&format!("{}\n", line.text), syntaxes)
                     .map(|ranges| {
@@ -120,7 +129,7 @@ pub fn build_rows(files: &[FileDiff], syntaxes: &SyntaxSet, theme: &Theme) -> (V
                     })
                     .unwrap_or_else(|_| vec![(TEXT, line.text.clone())]);
                 let num = if line.kind == Kind::Removed { line.old } else { line.new };
-                rows.push(Row::Code { kind: line.kind, num, spans });
+                rows.push(Row::Code { kind: line.kind, num, spans, changed });
             }
         }
     }
@@ -130,7 +139,7 @@ pub fn build_rows(files: &[FileDiff], syntaxes: &SyntaxSet, theme: &Theme) -> (V
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     frame.render_widget(Block::new().bg(BG), area);
-    let [top, _, body, bottom] =
+    let [top, gap, body, bottom] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Fill(1), Constraint::Length(1)])
             .areas(area);
     app.height = body.height as usize;
@@ -146,6 +155,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_widget(msg, Rect { y: body.y + body.height / 2, height: 1, ..body });
     } else {
         draw_body(frame, app, body);
+        // A header at the top (real or pinned) borrows the row above as its card's top edge.
+        let file = app.current_file();
+        let top = app.lines.get(app.scroll).map(|line| &app.rows[line.0]);
+        if app.file_rows[file] < app.scroll || matches!(top, Some(Row::Header(_))) {
+            draw_row(frame, app, &Row::Blank, 0, gap, 0, false);
+        }
+    }
+    if app.picker.is_some() || app.commit.is_some() || app.comment.is_some() || app.help {
+        dim_backdrop(frame);
     }
     if app.picker.is_some() {
         draw_picker(frame, app, area);
@@ -165,9 +183,53 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 pub fn key_hints(items: &[(&str, &str)]) -> Line<'static> {
     let spans: Vec<Span> = items
         .iter()
-        .flat_map(|(key, label)| [Span::raw(format!(" {key} ")).fg(TEXT).bg(RAISED), Span::raw(format!(" {label}   ")).fg(MUTED)])
+        .flat_map(|(key, label)| keycap(key).into_iter().chain([Span::raw(format!(" {label}   ")).fg(MUTED)]))
         .collect();
     Line::from(spans)
+}
+
+/// A key drawn as a pill: half-cell blocks round off the ends.
+pub fn keycap(key: &str) -> [Span<'static>; 3] {
+    [Span::raw("▐").fg(RAISED), Span::raw(key.to_string()).fg(TEXT).bg(RAISED), Span::raw("▌").fg(RAISED)]
+}
+
+/// A popup surface with even padding on every side. A cell is about twice as tall as it is wide, so
+/// the edges are half a row at the top and bottom and a full column at the sides. Draws the title
+/// row and returns the content area below it.
+pub fn panel(frame: &mut Frame, area: Rect, title: &str, aside: Line) -> Rect {
+    if area.height < 4 || area.width < 4 {
+        return Rect::default();
+    }
+    let fill = Rect { y: area.y + 1, height: area.height - 2, ..area };
+    frame.render_widget(Clear, fill);
+    frame.render_widget(Block::new().bg(POPUP), fill);
+    // Edge cells keep the backdrop's background; the half blocks paint the panel's side of the cell.
+    let buf = frame.buffer_mut();
+    for x in area.left()..area.right() {
+        for (y, symbol) in [(area.top(), "▄"), (area.bottom() - 1, "▀")] {
+            let cell = &mut buf[(x, y)];
+            cell.set_symbol(symbol).set_fg(POPUP);
+            cell.modifier = Modifier::empty();
+        }
+    }
+    let inner = Rect { x: area.x + 1, width: area.width - 2, ..fill };
+    let [title_row, _, body] = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Fill(1)]).areas(inner);
+    frame.render_widget(Span::raw(title.to_string()).fg(TEXT).bold(), title_row);
+    frame.render_widget(aside.right_aligned(), title_row);
+    body
+}
+
+/// Darkens everything drawn so far to 30% brightness, so a popup on top of it stands out.
+fn dim_backdrop(frame: &mut Frame) {
+    let scale = |c: u8| (u16::from(c) * 3 / 10) as u8;
+    let darken = |color: Color| match color {
+        Color::Rgb(r, g, b) => Color::Rgb(scale(r), scale(g), scale(b)),
+        other => other,
+    };
+    for cell in &mut frame.buffer_mut().content {
+        cell.fg = darken(cell.fg);
+        cell.bg = darken(cell.bg);
+    }
 }
 
 pub fn status_letter(status: Status) -> (&'static str, Color) {
@@ -298,7 +360,7 @@ fn draw_row(frame: &mut Frame, app: &App, row: &Row, segment: usize, area: Rect,
             ]);
             frame.render_widget(line.bg(SURFACE), area);
         }
-        Row::Code { kind, num, spans } => {
+        Row::Code { kind, num, spans, changed } => {
             let (bg, bar, num_fg) = match kind {
                 _ if selected => (SELECT_BG, Span::raw("▌").fg(ACCENT), ACCENT),
                 Kind::Added => (ADD_BG, Span::raw("▌").fg(ADD_FG), ADD_FG),
@@ -313,17 +375,30 @@ fn draw_row(frame: &mut Frame, app: &App, row: &Row, segment: usize, area: Rect,
             };
             let num = Span::raw(format!("{num:>width$}   ")).fg(num_fg);
             let mut out = vec![bar, if selected { num.bold() } else { num }];
-            let mut skip = if app.wrap > 0 { segment * app.wrap } else { app.hscroll };
+            let start = if app.wrap > 0 { segment * app.wrap } else { app.hscroll };
+            let emphasis = if *kind == Kind::Added { ADD_EMPHASIS } else { DEL_EMPHASIS };
+            let mut at = 0;
             for (fg, text) in spans {
-                let n = text.chars().count();
-                if skip >= n {
-                    skip -= n;
-                    continue;
+                let styled = |text: String, emphasized: bool| {
+                    let span = Span::raw(text).fg(*fg);
+                    if emphasized { span.bg(emphasis) } else { span }
+                };
+                // Split the span where the changed words start and end.
+                let (mut chunk, mut chunk_emphasized) = (String::new(), false);
+                for c in text.chars() {
+                    if at >= start {
+                        let emphasized = !selected && changed.as_ref().is_some_and(|range| range.contains(&at));
+                        if emphasized != chunk_emphasized && !chunk.is_empty() {
+                            out.push(styled(std::mem::take(&mut chunk), chunk_emphasized));
+                        }
+                        chunk_emphasized = emphasized;
+                        chunk.push(c);
+                    }
+                    at += 1;
                 }
-                let text: String = text.chars().skip(skip).collect();
-                skip = 0;
-                let span = Span::raw(text).fg(*fg);
-                out.push(if *kind == Kind::Removed && !selected { span.add_modifier(Modifier::DIM) } else { span });
+                if !chunk.is_empty() {
+                    out.push(styled(chunk, chunk_emphasized));
+                }
             }
             frame.render_widget(Line::from(out).bg(bg), area);
         }
@@ -331,28 +406,20 @@ fn draw_row(frame: &mut Frame, app: &App, row: &Row, segment: usize, area: Rect,
             let line = Line::from(vec![Span::raw(" ".repeat(width + 4)), Span::raw(*text).fg(FAINT).italic()]);
             frame.render_widget(line, area);
         }
-        Row::Blank => {}
+        // Half blocks give the header card half a row of padding above and below.
+        Row::Blank => frame.render_widget(Line::from("▄".repeat(area.width as usize)).fg(SURFACE), area),
+        Row::HeaderEnd => frame.render_widget(Line::from("▀".repeat(area.width as usize)).fg(SURFACE), area),
     }
 }
 
 fn draw_picker(frame: &mut Frame, app: &mut App, area: Rect) {
     let Some(picker) = app.picker.as_mut() else { return };
     let width = area.width.saturating_sub(8).min(90);
-    let height = (app.files.len() as u16 + 4).min(area.height.saturating_sub(4)).max(6);
+    let height = (app.files.len() as u16 + 6).min(area.height.saturating_sub(4)).max(8);
     let [popup] = Layout::horizontal([Constraint::Length(width)]).flex(ratatui::layout::Flex::Center).areas(area);
     let [popup] = Layout::vertical([Constraint::Length(height)]).flex(ratatui::layout::Flex::Center).areas(popup);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(BORDER))
-        .bg(SURFACE)
-        .title(Line::from(vec![
-            Span::raw(" Files ").fg(TEXT).bold(),
-            Span::raw(format!("{} ", picker.matches.len())).fg(MUTED),
-        ]));
-    let inner = block.inner(popup);
-    frame.render_widget(Clear, popup);
-    frame.render_widget(block, popup);
+    let inner = panel(frame, popup, "Files", Line::from(picker.matches.len().to_string()).fg(MUTED));
 
     let [input, _, list_area] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Fill(1)]).areas(inner);
