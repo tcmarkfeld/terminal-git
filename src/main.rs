@@ -422,16 +422,14 @@ impl App {
             KeyCode::Char('u') if ctrl => self.scroll_by(-page / 2),
             KeyCode::Char('f') if ctrl => self.scroll_by(page - 2),
             KeyCode::Char('b') if ctrl => self.scroll_by(-(page - 2)),
-            KeyCode::Char('j') | KeyCode::Down => self.scroll_by(1),
-            KeyCode::Char('k') | KeyCode::Up => self.scroll_by(-1),
             KeyCode::Char('d') => self.scroll_by(page / 2),
             KeyCode::Char('u') => self.scroll_by(-page / 2),
             KeyCode::Char(' ') | KeyCode::PageDown => self.scroll_by(page - 2),
             KeyCode::Char('b') | KeyCode::PageUp => self.scroll_by(-(page - 2)),
             KeyCode::Char('g') | KeyCode::Home => self.scroll = 0,
             KeyCode::Char('G') | KeyCode::End => self.scroll = usize::MAX,
-            KeyCode::Char('n' | ']') => self.jump_to_file(self.current_file() + 1),
-            KeyCode::Char('p' | 'N' | '[') => {
+            KeyCode::Char('j' | ']') | KeyCode::Down => self.jump_to_file(self.current_file() + 1),
+            KeyCode::Char('k' | '[') | KeyCode::Up => {
                 let file = self.current_file();
                 // From mid-file, go to the top of the current file first.
                 let target = if self.file_rows[file] < self.scroll { file } else { file.saturating_sub(1) };

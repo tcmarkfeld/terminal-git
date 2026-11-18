@@ -12,8 +12,8 @@ type Section = (&'static str, &'static [(&'static str, &'static str)]);
 
 /// Every shortcut, shared by the in-app overlay and `tg help`.
 const SECTIONS: &[Section] = &[
-    ("Navigate", &[("j k", "Scroll"), ("d u", "Half page"), ("space b", "Full page"), ("g G", "Top / bottom"), ("h l", "Scroll sideways")]),
-    ("Files", &[("n p", "Next / previous file"), ("m o", "Collapse / open file"), ("⌘O", "Find a file"), ("r", "Reload")]),
+    ("Navigate", &[("j k", "Next / previous file"), ("d u", "Half page"), ("space b", "Full page"), ("g G", "Top / bottom"), ("h l", "Scroll sideways")]),
+    ("Files", &[("m o", "Collapse / open file"), ("⌘O", "Find a file"), ("r", "Reload")]),
     ("Review", &[("v", "Select lines (or drag)"), ("j k", "Extend the selection"), ("c", "Comment to an agent")]),
     ("Git", &[("⌘/", "Open the commit dialog"), ("⏎", "Commit"), ("⌘\\", "Commit and push"), ("⌘U", "Push")]),
     ("General", &[("⌥/", "Shortcuts"), ("q", "Quit")]),

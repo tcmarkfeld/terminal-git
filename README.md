@@ -27,10 +27,10 @@ tg help            # usage and keys
 
 | Key | Action |
 | --- | --- |
-| `j` `k` / scroll | Scroll |
+| `j` `k` | Next / previous file |
+| scroll | Scroll |
 | `d` `u` / `Space` `b` | Half page / full page |
 | `g` `G` | Top / bottom |
-| `n` `p` | Next / previous file |
 | `m` `o` | Collapse / open the current file (or click its header) |
 | `h` `l` | Scroll sideways (long lines wrap automatically in narrow windows) |
 | `⌘O` or `f` | File finder |
